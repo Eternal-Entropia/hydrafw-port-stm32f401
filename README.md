@@ -81,9 +81,9 @@ Build outputs:
 ### Method 1: WebUSB DFU (Browser)
 1. Open `webpanel/start.html` in Chrome or Edge.
 2. Hold down the **BOOT** button on the BlackPill board (BOOT0 = 1).
-3. Press and release **RESET**, then release **BOOT**.
-4. Choose `src/build/hydrafw.bin` and click **"Flash via DFU"**.
-5. Press **RESET** after flashing.
+3. Press and release **RESET**, then release **BOOT** (enters DFU bootloader).
+4. Click **"Flash via DFU"** &mdash; it will automatically download the latest build from [GitHub `build/hydrafw.bin`](https://github.com/Eternal-Entropia/hydrafw-port-stm32f401/blob/main/build/hydrafw.bin) and flash it to the board.
+5. Press **RESET** on the board.
 
 ### Method 2: ST-Link / OpenOCD / STM32CubeProgrammer
 ```bash
