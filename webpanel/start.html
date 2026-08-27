@@ -183,19 +183,25 @@
     <h2>DFU Firmware Flasher (WebUSB)</h2>
     <div class="card-body">
       <div class="row">
-        <input type="file" id="dfuFileInput" accept=".bin,.hex">
-        <button class="danger" id="btnFlash">Flash via DFU</button>
+        <label for="dfuSourceSelect" style="font-size:12px;color:var(--muted);font-weight:600;">Firmware Source:</label>
+        <select id="dfuSourceSelect" style="max-width:360px;font-weight:600;">
+          <option value="github" selected>&#127760; GitHub: Eternal-Entropia/hydrafw-port-stm32f401 (Default)</option>
+          <option value="local">&#128193; Custom Local File (.bin / .hex)</option>
+        </select>
+        <input type="file" id="dfuFileInput" accept=".bin,.hex" style="display:none;max-width:240px;">
+        <button class="danger" id="btnFlash">&#9889; Flash via DFU</button>
       </div>
+      <div id="dfuStatusMsg" style="font-size:12px;color:var(--cyan);margin-top:6px;font-family:Consolas,monospace;display:none;"></div>
       <div class="progress-wrap">
         <div><div id="dfuProgress"></div></div>
       </div>
       <div class="hint">
-        Flashing Steps:
-        1) Select firmware file <kbd>build/hydrafw.bin</kbd> or <kbd>.hex</kbd>;<br>
-        2) Hold down the <kbd>BOOT</kbd> button on the board (BOOT0 = 1);<br>
-        3) Press and release <kbd>RESET</kbd>, then release <kbd>BOOT</kbd> — board will enter STM32 DFU bootloader (VID 0x0483);<br>
-        4) Click "Flash via DFU" and select your device in the browser prompt.<br>
-        After flashing: press RESET. Flash base address: 0x08000000.
+        <strong>Flashing Steps:</strong><br>
+        1) <strong>Default:</strong> Firmare binary is automatically fetched directly from <a href="https://github.com/Eternal-Entropia/hydrafw-port-stm32f401/blob/main/build/hydrafw.bin" target="_blank" style="color:var(--accent);text-decoration:underline;">GitHub build/hydrafw.bin</a> (or select a local file above);<br>
+        2) Hold down the <kbd>BOOT</kbd> button on the BlackPill board (BOOT0 = 1);<br>
+        3) Press and release <kbd>RESET</kbd>, then release <kbd>BOOT</kbd> &mdash; board enters STM32 DFU bootloader (VID 0x0483);<br>
+        4) Click <strong>"Flash via DFU"</strong> and select <em>STM32 BOOTLOADER</em> in the browser popup.<br>
+        After flashing: press <strong>RESET</strong> on the board. Flash address: <code>0x08000000</code>.
       </div>
     </div>
   </section>
@@ -380,14 +386,32 @@
 <script>
 "use strict";
 
+const GITHUB_BIN_URL = "https://raw.githubusercontent.com/Eternal-Entropia/hydrafw-port-stm32f401/main/build/hydrafw.bin";
+const GITHUB_FALLBACK_URL = "https://github.com/Eternal-Entropia/hydrafw-port-stm32f401/raw/main/build/hydrafw.bin";
+
 let loadedBinBuffer = null;
 
-document.getElementById("dfuFileInput").addEventListener("change", async (e) => {
+const sourceSelect = document.getElementById("dfuSourceSelect");
+const fileInput = document.getElementById("dfuFileInput");
+const statusMsg = document.getElementById("dfuStatusMsg");
+
+sourceSelect.addEventListener("change", () => {
+  if (sourceSelect.value === "local") {
+    fileInput.style.display = "inline-block";
+    fileInput.click();
+  } else {
+    fileInput.style.display = "none";
+    loadedBinBuffer = null;
+    statusMsg.style.display = "none";
+  }
+});
+
+fileInput.addEventListener("change", async (e) => {
   const file = e.target.files[0];
   if (!file) { loadedBinBuffer = null; return; }
   loadedBinBuffer = await file.arrayBuffer();
-  alert("Firmware file loaded: " + file.name +
-        " (" + loadedBinBuffer.byteLength + " bytes)");
+  statusMsg.style.display = "block";
+  statusMsg.textContent = "Local file loaded: " + file.name + " (" + loadedBinBuffer.byteLength.toLocaleString() + " bytes)";
 });
 
 function dfuProgress(done, total) {
@@ -402,8 +426,32 @@ async function flashDfu() {
     alert("WebUSB is not supported in this browser. Please use Chrome or Edge.");
     return;
   }
-  document.getElementById("btnFlash").disabled = true;
+  const btn = document.getElementById("btnFlash");
+  btn.disabled = true;
+
   try {
+    // 1. Fetch binary from GitHub if no local file was loaded
+    if (!loadedBinBuffer || sourceSelect.value === "github") {
+      statusMsg.style.display = "block";
+      statusMsg.textContent = "Fetching build/hydrafw.bin from GitHub (Eternal-Entropia/hydrafw-port-stm32f401)...";
+      try {
+        let resp = await fetch(GITHUB_BIN_URL);
+        if (!resp.ok) {
+          resp = await fetch(GITHUB_FALLBACK_URL);
+        }
+        if (!resp.ok) {
+          // Local relative path fallback if testing locally
+          resp = await fetch("../src/build/hydrafw.bin");
+        }
+        if (!resp.ok) throw new Error("HTTP response " + resp.status);
+        loadedBinBuffer = await resp.arrayBuffer();
+        statusMsg.textContent = `Downloaded hydrafw.bin from GitHub (${loadedBinBuffer.byteLength.toLocaleString()} bytes). Connecting to STM32 DFU...`;
+      } catch (err) {
+        throw new Error("Could not download hydrafw.bin from GitHub (" + (err.message || err) + "). You can select a local .bin file instead.");
+      }
+    }
+
+    // 2. Request WebUSB DFU device
     let usbDevice;
     try {
       usbDevice = await navigator.usb.requestDevice({
@@ -413,7 +461,7 @@ async function flashDfu() {
         ]
       });
     } catch (e) {
-      alert("No device selected.");
+      statusMsg.textContent = "No device selected.";
       return;
     }
 
@@ -434,7 +482,7 @@ async function flashDfu() {
       }
     }
     if (!interfaces || interfaces.length === 0)
-      throw new Error("DFU interface not found. Ensure BOOT0=1 and board was RESET.");
+      throw new Error("DFU interface not found. Ensure BOOT0=1 and press RESET on the board.");
 
     const baseDevice = new dfu.Device(usbDevice, interfaces[0]);
     await baseDevice.open();
@@ -474,7 +522,8 @@ async function flashDfu() {
 
     const dfuDevice = new dfuse.Device(usbDevice, ifaceSetting);
 
-    if (!loadedBinBuffer) throw new Error("Please select a firmware file (.bin) first.");
+    if (!loadedBinBuffer || loadedBinBuffer.byteLength === 0)
+      throw new Error("Firmware binary is empty or not loaded.");
 
     dfuDevice.logProgress = dfuProgress;
     dfuDevice.logInfo = (msg) => console.log("[DFU] " + msg);
@@ -493,16 +542,19 @@ async function flashDfu() {
       if (seg && !isNaN(seg.start)) dfuDevice.startAddress = seg.start;
     } catch (_) {}
 
+    statusMsg.textContent = "Flashing firmware to STM32 Flash (0x08000000)...";
     dfuProgress(0, 1);
     await dfuDevice.do_download(transferSize, loadedBinBuffer, manifestationTolerant);
 
     dfuProgress(1, 1);
-    alert("Flashing successful!\nPress RESET button.");
+    statusMsg.textContent = "Flashing completed successfully! Press RESET button on board.";
+    alert("Flashing successful!\nPress RESET button on your BlackPill board.");
   } catch (e) {
     dfuProgress(0, 1);
+    statusMsg.textContent = "Flashing error: " + (e.message || e);
     alert("Flashing error: " + (e.message || e));
   } finally {
-    document.getElementById("btnFlash").disabled = false;
+    btn.disabled = false;
   }
 }
 
